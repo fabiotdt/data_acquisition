@@ -22,5 +22,6 @@ def plot_ply(infile):
 	plt.show()	
 	
 if __name__ == '__main__':
-	infile = '../zed_data/marg_9.ply'
-	plot_ply(infile)
+	infile = "test_save/point_clouds/berry_0.ply"
+	pcl_load = o3d.io.read_point_cloud(infile)
+	o3d.visualization.draw_geometries([pcl_load])

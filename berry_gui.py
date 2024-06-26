@@ -7,6 +7,7 @@ import os
 import csv
 import datetime
 import pandas as pd
+import open3d as o3d
 
 class storing_data():
     def __init__(self, base_root='test_save/'):
@@ -64,8 +65,9 @@ class ImageApp:
 
         color_image = np.asanyarray(color_frame.get_data())  # color frames
         depth_image = np.asanyarray(depth_frame.get_data())  # depth images, embed the depth into the color of the pixel
+        depth_intrin = depth_frame.profile.as_video_stream_profile().intrinsics
 
-        return color_image, depth_image, depth_frame
+        return color_image, depth_image, depth_frame, depth_intrin
 
     def start(self):
         # Start the pipeline
@@ -76,15 +78,32 @@ class ImageApp:
         # Stop the pipeline
         self.pipeline.stop()
 
-    def depth_to_cloud(self, depth_frame):
-        points = rs.pointcloud()
-        points.map_to(depth_frame)
-        cloud = points.calculate(depth_frame)
+    def depth_to_cloud(self, color_image, depth_image, intrinsics):
+        
+        depth_o3d = o3d.geometry.Image(depth_image)
+        color_o3d = o3d.geometry.Image(color_image)
+        rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            color_o3d, depth_o3d, convert_rgb_to_intensity=False)
 
-        return cloud
+        # Create point cloud from RGBD image
+        pinhole_camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(
+            intrinsics.width, intrinsics.height,
+            intrinsics.fx, intrinsics.fy,
+            intrinsics.ppx, intrinsics.ppy)
+        
+        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(
+            rgbd_image, pinhole_camera_intrinsic)
+
+        # Flip it, otherwise the point cloud will be upside down
+        pcd.transform([[1, 0, 0, 0],
+                       [0, -1, 0, 0],
+                       [0, 0, -1, 0],
+                       [0, 0, 0, 1]])
+
+        return pcd
 
     def update_video_stream(self):
-        color_image, depth_image, _ = self.get_frame()
+        color_image, depth_image, _, _  = self.get_frame()
 
         prop = self.res[0] / self.res[1]
 
@@ -110,16 +129,14 @@ class ImageApp:
 
     def submit_action(self, name):
         
-        color_image, depth_image, depth_frame = self.get_frame()
+        color_image, depth_image, depth_frame, depth_intrin = self.get_frame()
 
         # Save the images
         cv2.imwrite(os.path.join(self.root_path.colour_images, name + '.jpg'), color_image)
         cv2.imwrite(os.path.join(self.root_path.depth_images, name + '.jpg'), depth_image)
         # Save the depth point cloud
-        #point_cloud = self.depth_to_cloud(depth_frame)
-        #point_cloud.export_to_ply(os.path.join(self.root_path.point_clouds, name + '.ply'), depth_frame)
-
-        #self.update_video_stream()
+        point_cloud = self.depth_to_cloud(color_image, depth_image, depth_intrin)
+        o3d.io.write_point_cloud(os.path.join(self.root_path.point_clouds, name + '.ply'), point_cloud, write_ascii=True)
 
 class FileCounterApp:
     def __init__(self, root):
